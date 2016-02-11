@@ -1,0 +1,44 @@
+/*
+ * This script disables all unconfigured 1G(ge),10G(xe), and 100G(et) interfaces as well as any ae interface with no config on it.
+ * Written by Josh Rogers and Rich Boldy.
+ * Script version 2.7
+ */
+ 
+version 1.0;
+
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ 
+import "../import/junos.xsl";
+ 
+match configuration {
+ 
+    /* Get the current interface list  */
+    var $interfaces = jcs:invoke( "get-interface-information" );
+ 
+    /* Only ge and xe interfaces */
+    var $unused-interfaces = $interfaces/physical-interface[starts-with(name, "ge-") or starts-with(name, "xe-") or starts-with(name, "et-") or starts-with(name, "ae")];
+ 
+    var $interface-hierarchy = interfaces;
+ 
+    /* Go through each interface, if it isn't within the configuration then apply-group disable-interface */
+    for-each( $unused-interfaces ) {
+ 
+        if( jcs:empty( $interface-hierarchy/interface[name == current()/name ] ) ) {
+	     <xnm:warning> {
+		<message> "Commit script named *disable-interfaces* is helpfully disabling unconfigured interface: " _ name;
+	     }
+	     <change> {
+                <interfaces> {
+                    <interface> {
+                        <name> name;
+                        call jcs:emit-comment(); 
+                        <apply-groups> "disable-interface";
+                    }
+                }
+	    }
+        }
+    }
+}
+
