@@ -1,0 +1,183 @@
+/* NAME: vpls-loop-protect.slax /*
+
+/* FUNCTION: 	To shutdown a customer facing interface unit that is looping 
+*		traffic back into a VPLS instance.
+
+/* METHOD:   	The script is triggered by event "l2ald_mac_move_notification"
+*		It firstly creates the event-policy to call itself in config.
+*		It checks the contents of the command  
+*		"show l2-learning mac-move-buffer extensive".
+*		It creates variables for the new-interface and the mac-address.
+*		It then separates the interface into physical and unit variables
+*		If the interface is "lsi" a message is written to syslog.
+*		If the interface is not "lsi" the interface-unit is disabled.
+*		and a message is sent to syslog...
+*               'set routing-instance <name> apply-macro MACMOVE-OPTOUT' to 
+*               opt-out for a given vpls instance.
+*
+*    CREATED: 05/21/12
+*    BY: Rich Boldy (Time Warner Cable) 
+*    LAST MOD:03/22/13
+*    BY: Josh Rogers
+*    SCRIPT VERSION: 4.4
+*
+*    MODIFICATION HISTORY:
+*        v1.0 = Initial Draft
+*        v1.1 = event-policy creation - working.
+*	 v2.0 = variable testing and show command parse working.
+*	 v2.1 = variables and error testing passing to config template.
+*	 v2.2 = phyiscial interface shutdown testing and working.
+*	 v3.0 = unit shutdown testing and working with syslog messages.
+*	 v4.0 = restrticted to not attempt to shutdown lsi interfaces.   
+*	 v4.1 = clean-up and edits and log messages fixed - tested and working.
+*        v4.3 = Add exception for virtual MAC's used by VRRP/HSRP, fixed a 
+*               serious bug where oldest entry in buffer was evaluated rather
+*               than newest
+*        v4.4 = added a method to 'opt-out' of the script.
+*        v4.5 = PENDING:use get config interface to see if interface is member of lag, and adjust phy/unit to compensate and also add syslog dampening
+*        v4.6 = dampen rate of execution (cromanik)
+*/ 
+version 1.1;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+var $con = jcs:open();
+var $get-config-cmd = <get-configuration>;
+var $get-config-rsp := jcs:execute( $con, $get-config-cmd );
+
+/* Create the event policy in config! */
+
+var $event-definition = {
+    <event-options> {
+        <policy> {
+            <name> 'vpls-loop-protect';
+            <events> 'L2ALD_MAC_MOVE_NOTIFICATION';
+            <then> {
+                <event-script> {
+                    <name> 'vpls-loop-protect.slax';
+                }
+            }
+        }
+    }
+}
+
+/* Set variable $self for name of this script */
+
+var $self="vpls-loop-protect.slax";
+
+match / {
+	<op-script-results> {
+            if (jcs:dampen('VPLS_LOOP_SCRIPT_TRACKER', 3, 1)) {
+		/* Analyse the triggering event. */
+		if (not(event-script-input/trigger-event/id)) {
+		    expr jcs:syslog("user.err", $self, "[ERROR]: Called without a <trigger-event>/<id> element.");
+		}
+		else if (event-script-input/trigger-event/id == "L2ALD_MAC_MOVE_NOTIFICATION") {
+		call collect-data();
+		}
+             } else {
+                expr jcs:syslog("user.err", 'VPLS-LOOP-PROTECT: Script did not execute - DAMPENED');
+             }
+	}
+}
+
+template collect-data()   {
+
+/*
+* Run the command "show l2-learning mac-move-buffer.
+* Associate the new interface to variable $new-interface
+* Associate the mac address to variable $mac-address
+*/
+
+var $show-mac-move = { <command> "show l2-learning mac-move-buffer extensive"; }
+var $mac-move = jcs:invoke($show-mac-move);
+var $new-interface = $mac-move/l2ald-mac-move-entry[ last() ]/l2ald-mac-move-to-ifl;
+var $mac-address = $mac-move/l2ald-mac-move-entry[ last() ]/l2ald-mac-address;
+var $filter-name = "vpls-loop-protect-" _ $new-interface;
+var $domain = substring-before(substring-after($mac-move/l2ald-mac-move-entry[ last() ]/l2ald-mac-move-bridge-domain, "__"), "__");
+
+/* Parse interface to separate out physical and unit */
+
+var $pattern = "[.]";
+var $substrings = jcs:split($pattern, $new-interface);
+var $physical = $substrings[1];
+var $unit = $substrings[2];
+/* Create variable "lsi" to match against */
+
+var $lsi = "lsi";
+
+/* Create match condition to exclude lsi interfaces and virtual MAC's, or shutdown and log */
+
+	if (($get-config-rsp/routing-instances/instance[ name == $domain ]/apply-macro[ name == "MACMOVE-OPTOUT" ]) and ($physical != $lsi)) {
+          expr jcs:syslog("user.information", $self, "  MACMOVE-OPTOUT:ignoring ", $mac-address, " flapping.. ", $new-interface, "..");
+        } else if ($physical == $lsi) {
+	  expr jcs:syslog("user.warning", $self, "  ", $mac-address, " flapping.. ", $new-interface, "..");
+/* VRRP=00:00:5e:00:01:xx, HSRP=00:00:0c:07:ac:xx, GLBP=00:07:b4:00:01:xx, WLBS=02:bf */
+        } else if (jcs:regex( "00:00:5e:00:01:..", $mac-address) or jcs:regex( "00:00:0c:07:ac:..", $mac-address) or jcs:regex( "00:07:b4:00:01:..", $mac-address) or jcs:regex( "02:bf:..:..:..:..", $mac-address)) {
+          expr jcs:syslog("user.warning", $self, "  Virtual Mac ", $mac-address, " flapping.. ", $new-interface, "..");
+        }
+/* Create match condition to call template to shut interface unit and log  */
+/* Variables $physical and $unit are passed to the called template */
+ 
+	else {
+	         call MakeConfigChange($physical = $physical, $unit = $unit);
+	expr jcs:syslog("user.warning", $self, " [VPLS-LOOP-DETECTED]: Frame with source-mac ", $mac-address, " looped back into vpls on ", $new-interface);
+	} 
+}
+
+/* Create template for making the config change */
+
+template MakeConfigChange($physical, $unit) {
+
+/* Declare config to change as a variable */
+
+var $disable-unit = {
+        <configuration> {
+             <interfaces> {
+                 <interface> {
+                     <name> $physical; 
+			<unit> {
+			  <name> $unit; 
+	                        call jcs:emit-comment();
+				<disable>; 
+			 	}
+            	  	}
+		}
+	}
+}
+
+
+/* Create condition to log error message if connect fails */
+
+if (not($con)) {
+         expr jcs:syslog("user.err", $self, "[Err]: Unable to connect to mgd.");
+}
+
+/* Create condition to apply config change and log resul */
+
+else { 
+          var $change-result := {
+  		call jcs:load-configuration($connection=$con,$configuration=$disable-unit); 
+                }
+                if ($change-result//xnm:error) {
+                        expr jcs:syslog("user.err", $self, " [Err]: Error during commit (",$change-results//xnm:error/message, ")");
+                }
+                else if ($change-result//xnm:warning) {
+                        expr jcs:syslog("user.warning", $self, " [Warning]: Warning during commit (",$change-results//xnm:warning/message, ")");
+                }
+                else {
+                expr jcs:syslog("user.warning", $self, " [VPLS-LOOP-DETECTED]: Interface ", $physical, ".", $unit, " shutdown due to loop.");
+                }       
+                expr jcs:close($con);
+        }
+}
+————
+end of script.
+
+Not in script - add the below to config:
+
+set protocols l2-learning global-mac-move threshold-time 30
+set protocols l2-learning global-mac-move threshold-count 50
+set protocols l2-learning global-mac-table-aging-time 3600
