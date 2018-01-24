@@ -1,12 +1,11 @@
-
 version 1.1;
 /*
 ************************************************
-Script version 2.4 written by Rich Boldy 2/2/2016 
-This script is an op script that displays a snapshot 
-of the most relevent inforation about the router,
-it's operational status and the status of major
-protcols and interfaces. 
+Script version 2.4 written by Rich Boldy 2/2/2016. 
+This script is an op script that displays a snapshot of the most relevent inforation about the router,
+it's operational status and the status of major protcols and interfaces. 
+It's set up in modular way so that you can add/remove a template and call function in the match / 
+Feel free to email me at richard.boldy@gmail.com with questions or comments. 
 ************************************************
 * To run this script it must be installed in   * 
 * /var/db/scripts/op/ and called snapshot.slax *

@@ -1,7 +1,13 @@
 /*
  * This script disables all unconfigured 1G(ge),10G(xe), and 100G(et) interfaces as well as any ae interface with no config on it.
- * Written by Josh Rogers and Rich Boldy.
- * Script version 2.7
+ * Written by Rich Boldy.
+ * Script version 3.1
+ * Script requires the following configuration be applied to the Juniper device and the file to be uploaded to /var/db/scripts/commit/:
+ *   set groups disable-interface interfaces <*> disable
+ *   set system scripts commit file disable-interfaces.slax
+ * Note that once the scrip has applied the apply-group config to an interface it needs to be deleted to open the interface however you 
+ *   must also add some other configuration to that interface at this time else the script will apply the group again. Any config including a 
+ *   description will prevent this.
  */
  
 version 1.0;

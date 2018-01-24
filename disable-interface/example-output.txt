@@ -1,0 +1,22 @@
+{master}[edit]
+george_clooney@re0.bar3.xxx# show interfaces xe-0/1/1
+
+{master}[edit]
+george_clooney@re0.bar3.xxx# commit
+re0:
+warning: Commit script named *disable-interfaces* is helpfully disabling unconfigured interface: xe-0/1/1
+re0:
+configuration check succeeds
+re1:
+commit complete
+re0:
+commit complete
+
+{master}[edit]
+george_clooney@re0.bar3.xxx# show interfaces xe-0/1/1
+/* Added by user george_clooney on Wed Jan 24 17:10:47 2018 (script disable-interfaces.slax) */
+apply-groups disable-interface;
+
+{master}[edit]
+george_clooney@re0.bar3.ash2#
+
